@@ -192,7 +192,10 @@ function buildData(sheets) {
 
   // Personen sortieren: bekannte zuerst in Konfig-Reihenfolge, dann weitere
   const active = new Set();
-  for (const m of months.values()) for (const d of m.days) Object.keys(d.entries).forEach(a => active.add(a));
+  // (bekannte Assistenz, sobald sie vorkommt; andere Kürzel nur, wenn sie Dienste haben)
+  for (const m of months.values()) for (const d of m.days) for (const [a, set] of Object.entries(d.entries)) {
+    if (known.has(a) || set.has('dienst')) active.add(a);
+  }
   const people = [...canon.values()].filter(a => active.has(a))
     .sort((a, b) => (known.has(b) - known.has(a)) || a.localeCompare(b, 'de'));
 
