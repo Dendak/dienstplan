@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dienstplan Assistenz</title>
+<meta name="theme-color" content="#1e1b4b">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M12 14v4M10 16h4"/></svg>
+      </div>
+      <div>
+        <h1>Dienstplan Assistenz</h1>
+        <p class="sub">Frauenheilkunde &amp; Geburtshilfe · Vöcklabruck</p>
+      </div>
+    </div>
+    <div class="month-nav" id="monthNav">
+      <button class="icon-btn" id="prevMonth" aria-label="Vorheriger Monat">‹</button>
+      <span id="monthLabel">–</span>
+      <button class="icon-btn" id="nextMonth" aria-label="Nächster Monat">›</button>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="me" class="tab active">Mein Plan</button>
+    <button role="tab" data-view="team" class="tab">Team</button>
+    <button role="tab" data-view="day" class="tab">Tag</button>
+  </nav>
+</header>
+
+<div id="previewBanner" class="banner" hidden>
+  <span>Vorschau: <strong id="previewName"></strong> (nur in diesem Browser, nicht veröffentlicht)</span>
+  <button id="endPreview" class="btn-ghost">Vorschau beenden</button>
+</div>
+
+<main id="app">
+  <div class="loading">Plan wird geladen …</div>
+</main>
+
+<footer class="foot">
+  <details>
+    <summary>Für die Dienstplanerin</summary>
+    <ol class="steps">
+      <li>Excel-Datei(en) hier hineinziehen oder auswählen – der Plan wird zuerst nur <em>auf diesem Gerät</em> als Vorschau angezeigt und geprüft.</li>
+      <li>Passt alles: <strong>„Verschlüsselt speichern“</strong> – es wird die Datei <code>plan.enc</code> heruntergeladen (bisherige Monate bleiben enthalten, gleichnamige Dateien werden ersetzt).</li>
+      <li><code>plan.enc</code> auf GitHub in den Ordner <code>plaene</code> hochladen (vorhandene Datei ersetzen) → nach ca. 1 Minute ist der neue Plan online.</li>
+    </ol>
+    <div class="row-actions">
+      <label class="btn secondary">Excel auswählen<input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls" multiple hidden></label>
+      <button class="btn" id="publishBtn" hidden>Verschlüsselt speichern</button>
+    </div>
+    <div id="publishHelp" class="note" hidden>
+      <strong>plan.enc</strong> wurde heruntergeladen. Jetzt hochladen:
+      <a href="https://github.com/Dendak/dienstplan/upload/main/plaene" target="_blank" rel="noopener">GitHub → Ordner „plaene“ → Datei hineinziehen → „Commit changes“</a>.
+      Die Excel-Datei selbst <em>nicht</em> hochladen.
+    </div>
+    <div id="checks"></div>
+  </details>
+  <p class="small"><button class="btn-link" id="logoutBtn" hidden>Passwort auf diesem Gerät vergessen</button></p>
+  <p class="muted small" id="sourceInfo"></p>
+</footer>
+
+<div id="dropOverlay" hidden><div>Excel-Datei loslassen für Vorschau</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
