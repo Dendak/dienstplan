@@ -16,8 +16,17 @@ const ASSISTENZ = {
   San:  'Dr.in Sofia Santesteban',
 };
 
-// Kürzel von Primar/Oberärzt:innen – werden ignoriert (nicht als "unbekannt" gemeldet)
-const OA_KUERZEL = ['Br', 'Was', 'Co', 'Ki', 'Ra', 'Pf', 'Pu', 'Bl', 'Ba', 'Gi', 'Ko', 'Sch'];
+// Primar/Oberärzt:innen – werden als "OA im Dienst" angezeigt (Spalte ND1)
+const OA_NAMEN = {
+  Br:  'Prim. Dr. Helge Brandmeier',
+  Was: 'OA Dr. Wolfram Wasserfaller',
+  Co:  'OA Dr. Ludovit Cobirka',
+  Gi:  'OÄ Dr.in Elke Gierlinger-Plöderl',
+  Ki:  'OA Dr. Dovydas Kindurys',
+  Pu:  'OA Dr. Christian Puttinger',
+  Ra:  'OÄ Dr.in Jovana Radojevic',
+};
+const OA_KUERZEL = [...Object.keys(OA_NAMEN), 'Pf', 'Bl', 'Ba', 'Ko', 'Sch'];
 
 // Spaltenüberschrift (Zeile 1 im Excel) → Status
 const SPALTEN = {
@@ -177,9 +186,10 @@ function buildData(sheets) {
   for (const m of months.values()) {
     for (const d of m.days) {
       const norm = {};
+      d.oa = [];
       for (const [n, set] of Object.entries(d.entries)) {
         const a = canon.get(n.toLowerCase());
-        if (!a) continue;
+        if (!a) { if (set.has('dienst')) d.oa.push(n); continue; }
         norm[a] ||= new Set();
         set.forEach(s => norm[a].add(s));
       }
@@ -219,7 +229,9 @@ const state = {
   person: safeGet('dp.person') || '',
   month: null, day: todayIso(), sourceInfo: '',
   enc: null, password: null, files: [], pending: null, locked: false, lockError: '',
+  planMode: safeGet('dp.planMode') || 'list', onlyMine: safeGet('dp.onlyMine') === '1', choosing: false, scrollToday: false,
 };
+if (!['me', 'plan', 'day'].includes(state.view)) state.view = 'me';
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* egal */ } }
 function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function safeDel(k) { try { localStorage.removeItem(k); } catch (e) { /* egal */ } }
@@ -332,89 +344,219 @@ function render() {
   $('#nextMonth').disabled = idx >= keys.length - 1;
 
   const month = data.months.get(state.month);
-  if (state.view === 'team') app.innerHTML = viewTeam(data, month);
+  $('#monthNav').hidden = state.view === 'day';
+  if (state.view === 'plan') app.innerHTML = viewPlan(data, month);
   else if (state.view === 'day') app.innerHTML = viewDay(data);
   else app.innerHTML = viewMe(data, month);
   renderChecks();
+  if (state.scrollToday) {
+    state.scrollToday = false;
+    const t = $('#app .is-today');
+    if (t) t.scrollIntoView({ block: 'center' });
+  }
 }
 
-function peoplePicker(data) {
-  return `<div class="people">${data.people.map(a => `
-    <button class="person${a === state.person ? ' active' : ''}" data-person="${esc(a)}" title="${esc(personName(a))}">
-      <span class="av">${esc(initials(a))}</span>${esc(ASSISTENZ[a] ? ASSISTENZ[a].replace(/^Dr\.(in)? /, '') : a)}
+// ---- Namen ----
+const plainName = a => (ASSISTENZ[a] || a).replace(/^Dr\.(in)? /, '');
+const surname = a => ASSISTENZ[a] ? plainName(a).split(' ').slice(-1)[0] : a;
+const oaName = k => OA_NAMEN[k] || k;
+const oaShort = k => OA_NAMEN[k] ? OA_NAMEN[k].replace(/^(Prim\.|OA|OÄ) (Dr\.(in)? )?/, '$1 ').replace(/ \S+ (\S+)$/, ' $1') : k;
+const avatar = a => `<span class="av" aria-hidden="true">${esc(a)}</span>`;
+
+function dienstOf(day, data) { return day ? data.people.filter(a => statusesOf(day, a).includes('dienst')) : []; }
+function oaOf(day) { return (day && day.oa) || []; }
+
+function allDays(data) {
+  return [...data.months.values()].sort((x, y) => x.key.localeCompare(y.key)).flatMap(m => m.days);
+}
+function relDays(date) {
+  const diff = Math.round((parseIso(date) - parseIso(todayIso())) / 86400000);
+  if (diff === 0) return 'heute';
+  if (diff === 1) return 'morgen';
+  if (diff === -1) return 'gestern';
+  if (diff > 1) return `in ${diff} Tagen`;
+  return `vor ${-diff} Tagen`;
+}
+const dayTags = date => {
+  const hol = holidayOf(date);
+  if (hol) return `<span class="chip chip-hol">${esc(hol)}</span>`;
+  const w = dow(date);
+  return (w === 0 || w === 6) ? `<span class="chip chip-we">Wochenende</span>` : '';
+};
+const oaLine = (day, prefix = 'mit ') => {
+  const oa = oaOf(day);
+  return oa.length ? `${prefix}${oa.map(k => `<strong title="${esc(oaName(k))}">${esc(oaShort(k))}</strong>`).join(' / ')}` : '<span class="muted">OA: noch offen</span>';
+};
+
+function peoplePicker(data, big) {
+  return `<div class="people${big ? ' people-big' : ''}">${data.people.map(a => `
+    <button class="person${a === state.person ? ' active' : ''}" data-person="${esc(a)}">
+      ${avatar(a)}<span>${esc(plainName(a))}</span>
     </button>`).join('')}</div>`;
 }
 
 function legend(keys) {
-  return `<div class="legend">${keys.map(k => `<span><i class="${STATUS[k].cls}"${k === 'vb' ? ' style="border:1px solid var(--line)"' : ''}></i>${STATUS[k].short} = ${STATUS[k].label}</span>`).join('')}</div>`;
+  return `<div class="legend">${keys.map(k => `<span><i class="${STATUS[k].cls}"${k === 'vb' ? ' style="border:1px solid var(--line)"' : ''}></i>${STATUS[k].label}</span>`).join('')}</div>`;
 }
+
+// ---------------------------------------------------------------------------
+// Meine Dienste
+// ---------------------------------------------------------------------------
 
 function viewMe(data, month) {
   const a = state.person;
-  if (!a || !data.people.includes(a)) {
-    return `<section class="card"><h2>Wer bist du?</h2>${peoplePicker(data)}
-      <p class="muted small">Die Auswahl wird nur auf diesem Gerät gespeichert.</p></section>`;
+  if (!a || !data.people.includes(a) || state.choosing) {
+    return `<section class="card onboarding">
+      <h2>Wer bist du?</h2>
+      <p class="muted">Tippe auf deinen Namen – danach siehst du sofort deine Dienste. Die Auswahl wird nur auf diesem Gerät gespeichert.</p>
+      ${peoplePicker(data, true)}
+    </section>`;
   }
-  const days = month.days;
-  const dienste = days.filter(d => statusesOf(d, a).includes('dienst'));
-  const weDienste = dienste.filter(d => isWeekendOrHoliday(d.date));
-  const count = st => days.filter(d => statusesOf(d, a).includes(st)).length;
   const today = todayIso();
+  const days = allDays(data);
+  const next = days.find(d => d.date >= today && statusesOf(d, a).includes('dienst'));
+  const myMonth = month.days.filter(d => statusesOf(d, a).includes('dienst'));
+  const we = myMonth.filter(d => isWeekendOrHoliday(d.date)).length;
+  const count = st => month.days.filter(d => statusesOf(d, a).includes(st)).length;
+
+  // Hero: nächster Dienst
+  let hero;
+  if (next) {
+    const rel = relDays(next.date);
+    hero = `<section class="hero">
+      <div class="hero-top"><span class="hero-label">${rel === 'heute' ? 'Heute hast du Dienst' : 'Dein nächster Dienst'}</span>
+        <button class="hero-who" data-action="choose" title="Person wechseln">${avatar(a)}${esc(plainName(a).split(' ')[0])} <span aria-hidden="true">▾</span></button></div>
+      <div class="hero-date">${fmtLong(next.date).replace(/ \d{4}$/, '')}</div>
+      <div class="hero-meta"><span class="hero-rel">${rel}</span>${dayTags(next.date)}</div>
+      <div class="hero-oa">${oaLine(next, 'mit ')}</div>
+    </section>`;
+  } else {
+    hero = `<section class="hero">
+      <div class="hero-top"><span class="hero-label">Keine weiteren Dienste</span>
+        <button class="hero-who" data-action="choose">${avatar(a)}${esc(plainName(a).split(' ')[0])} <span aria-hidden="true">▾</span></button></div>
+      <div class="hero-date small-date">Im veröffentlichten Plan ist kein weiterer Dienst eingetragen.</div>
+    </section>`;
+  }
+
+  // Liste der Dienste im Monat
+  const list = myMonth.length ? `<ul class="dlist">${myMonth.map(d => {
+    const past = d.date < today;
+    return `<li class="${past ? 'past' : ''}${d.date === today ? ' is-today' : ''}" data-goto="${d.date}">
+      <div class="dl-date${isWeekendOrHoliday(d.date) ? ' we' : ''}"><b>${+d.date.slice(8)}</b><span>${WT[dow(d.date)]}</span></div>
+      <div class="dl-main">
+        <div class="dl-title">Dienst ${d.date >= today ? `<span class="muted">· ${relDays(d.date)}</span>` : ''}</div>
+        <div class="dl-sub">${oaLine(d)}</div>
+      </div>
+      <div class="dl-side">${dayTags(d.date)}</div>
+    </li>`;
+  }).join('')}</ul>` : '<p class="muted">In diesem Monat hast du keinen Dienst.</p>';
+
+  // Weitere Einträge (Urlaub, FB, WRT, Ersatzfrei, …)
+  const other = [];
+  for (const d of month.days) for (const s of statusesOf(d, a)) if (!['vb', 'dienst', 'frei'].includes(s)) {
+    const last = other[other.length - 1];
+    if (last && last.s === s && addDays(last.to, 1) === d.date) last.to = d.date; else other.push({ s, from: d.date, to: d.date });
+  }
 
   // Kalender (Montag zuerst)
-  const lead = (dow(days[0].date) + 6) % 7;
+  const lead = (dow(month.days[0].date) + 6) % 7;
   let cal = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(w => `<div class="dow">${w}</div>`).join('');
   cal += '<div class="cell blank"></div>'.repeat(lead);
-  for (const d of days) {
-    const sts = statusesOf(d, a).filter(s => s !== 'vb' || statusesOf(d, a).length === 1);
+  for (const d of month.days) {
+    const sts = statusesOf(d, a);
+    const p = sts[0];
     const hol = holidayOf(d.date);
-    const cls = ['cell', isWeekendOrHoliday(d.date) && !hol ? 'we' : '', hol ? 'hol' : '', d.date === today ? 'today' : ''].join(' ');
-    cal += `<div class="${cls}" title="${esc(hol || '')}"><span class="d">${+d.date.slice(8)}</span>
-      ${sts.slice(0, 2).map(s => `<span class="pill ${STATUS[s].cls}" title="${STATUS[s].label}">${STATUS[s].cal || STATUS[s].label}</span>`).join('')}</div>`;
+    const cls = ['cell', isWeekendOrHoliday(d.date) ? 'we' : '', hol ? 'hol' : '', d.date === today ? 'today' : '', p && p !== 'vb' ? 'has ' + STATUS[p].cls : ''].join(' ');
+    const sub = p === 'dienst' ? (oaOf(d).map(esc).join('/') || '') : p && p !== 'vb' ? (STATUS[p].cal || STATUS[p].label) : '';
+    cal += `<button class="${cls}" data-goto="${d.date}" title="${esc([fmtDay(d.date), hol, ...sts.filter(s => s !== 'vb').map(s => STATUS[s].label)].filter(Boolean).join(' · '))}">
+      <span class="d">${+d.date.slice(8)}</span>${p === 'dienst' ? '<span class="c-main">Dienst</span>' : ''}<span class="c-sub">${sub}</span></button>`;
   }
 
-  // Termine
-  const items = [];
-  for (const d of days) for (const s of statusesOf(d, a)) if (s !== 'vb') items.push({ d, s });
-  const upcoming = items.filter(i => i.d.date >= today);
-  const list = (upcoming.length ? upcoming : items);
-
   return `
-    <section class="card"><h2>Person</h2>${peoplePicker(data)}</section>
+    ${hero}
     <section class="card">
-      <h2>${esc(personName(a))} <span class="muted">· ${monthLabel(state.month)}</span></h2>
-      <div class="stats">
-        <div class="stat"><b>${dienste.length}</b><span>Dienste</span></div>
-        <div class="stat"><b>${weDienste.length}</b><span>davon Wochenende/Feiertag</span></div>
-        <div class="stat"><b>${count('urlaub')}</b><span>Urlaubstage</span></div>
-        <div class="stat"><b>${count('fb') + count('wrt') + count('efrei')}</b><span>FB / WRT / Ersatzfrei</span></div>
+      <div class="card-head">
+        <h2>Meine Dienste <span class="muted">· ${monthLabel(state.month)}</span></h2>
+        <span class="summary">${myMonth.length} Dienste${we ? ` · ${we} WE/Feiertag` : ''}</span>
       </div>
+      ${list}
     </section>
+    ${other.length ? `<section class="card">
+      <h2>Weitere Einträge</h2>
+      <ul class="olist">${other.map(o => `<li><span class="tag ${STATUS[o.s].cls}">${STATUS[o.s].label}</span>
+        <span>${o.from === o.to ? fmtDay(o.from) : `${fmtDay(o.from)} – ${fmtDay(o.to)}`}</span></li>`).join('')}</ul>
+    </section>` : ''}
     <section class="card">
+      <h2>Kalender</h2>
       <div class="cal">${cal}</div>
-      ${legend(['dienst', 'frei', 'urlaub', 'fb', 'wrt', 'efrei', 'gm', 'abw'])}
+      ${legend(['dienst', 'frei', 'urlaub', 'fb', 'wrt', 'efrei', 'abw'])}
+      <p class="muted small">Tippe auf einen Tag, um zu sehen, wer an dem Tag Dienst hat.</p>
     </section>
     <section class="card">
-      <h2>${upcoming.length ? 'Nächste Einträge' : 'Einträge im Monat'}</h2>
-      ${list.length ? `<ul class="list">${list.map(i => `
-        <li><span class="when">${fmtDay(i.d.date)}</span><span class="tag ${STATUS[i.s].cls}">${STATUS[i.s].label}</span>
-        ${holidayOf(i.d.date) ? `<span class="muted small">${esc(holidayOf(i.d.date))}</span>` : ''}</li>`).join('')}</ul>`
-        : '<p class="muted">Keine Einträge.</p>'}
+      <h2>In den eigenen Kalender</h2>
+      <p class="muted small">Lädt alle veröffentlichten Dienste als .ics-Datei – öffnen mit Outlook, Google- oder iPhone-Kalender.</p>
       <div class="row-actions">
-        <button class="btn" id="icsBtn">In meinen Kalender (.ics)</button>
+        <button class="btn" id="icsBtn">Dienste exportieren (.ics)</button>
         <button class="btn secondary" onclick="window.print()">Drucken</button>
       </div>
-      <p class="muted small">Die .ics-Datei enthält alle veröffentlichten Monate und lässt sich in Outlook, Google- oder iPhone-Kalender importieren.</p>
     </section>`;
 }
 
-function viewTeam(data, month) {
+// ---------------------------------------------------------------------------
+// Monatsplan
+// ---------------------------------------------------------------------------
+
+function viewPlan(data, month) {
+  const me = data.people.includes(state.person) ? state.person : null;
+  const mode = state.planMode;
+  const onlyMine = state.onlyMine && me;
+  const today = todayIso();
+
+  const controls = `<div class="plan-controls">
+    <div class="seg" role="group" aria-label="Darstellung">
+      <button class="${mode === 'list' ? 'on' : ''}" data-mode="list">Liste</button>
+      <button class="${mode === 'table' ? 'on' : ''}" data-mode="table">Tabelle</button>
+    </div>
+    ${me && mode === 'list' ? `<label class="switch"><input type="checkbox" id="onlyMine" ${onlyMine ? 'checked' : ''}> nur meine Dienste</label>` : ''}
+  </div>`;
+
+  if (mode === 'table') return `<section class="card">${controls}${planTable(data, month, me)}</section>`;
+
+  const rows = month.days.map(d => {
+    const dienst = dienstOf(d, data);
+    const mine = me && dienst.includes(me);
+    if (onlyMine && !mine) return '';
+    const hol = holidayOf(d.date);
+    const extra = [];
+    for (const [st, lbl] of [['frei', 'frei n. D.'], ['urlaub', 'Urlaub'], ['efrei', 'Ersatzfrei'], ['wrt', 'WRT'], ['fb', 'FB'], ['gm', 'Gmunden'], ['abw', 'abwesend']]) {
+      const who = data.people.filter(a => statusesOf(d, a).includes(st) && !dienst.includes(a));
+      if (who.length) extra.push(`<span class="x"><span class="x-l">${lbl}:</span> ${who.map(a => a === me ? '<b>du</b>' : esc(surname(a))).join(', ')}</span>`);
+    }
+    return `<li class="${mine ? 'mine' : ''}${d.date === today ? ' is-today' : ''}${d.date < today ? ' past' : ''}" data-goto="${d.date}">
+      <div class="dl-date${isWeekendOrHoliday(d.date) ? ' we' : ''}${hol ? ' hol' : ''}"><b>${+d.date.slice(8)}</b><span>${WT[dow(d.date)]}</span></div>
+      <div class="dl-main">
+        <div class="dl-title">${dienst.length ? dienst.map(a => a === me ? `<span class="me-badge">Du</span>` : esc(plainName(a))).join(', ') : '<span class="muted">kein Dienst eingetragen</span>'}</div>
+        <div class="dl-sub">${oaOf(d).length ? `mit ${oaOf(d).map(k => `<strong title="${esc(oaName(k))}">${esc(oaShort(k))}</strong>`).join(' / ')}` : ''}${hol ? ` <span class="hol-name">${esc(hol)}</span>` : ''}</div>
+        ${extra.length ? `<div class="dl-extra">${extra.join('')}</div>` : ''}
+      </div>
+    </li>`;
+  }).join('');
+
+  return `<section class="card">
+    <div class="card-head"><h2>Monatsplan <span class="muted">· ${monthLabel(state.month)}</span></h2></div>
+    ${controls}
+    <ul class="dlist plan">${rows || '<li class="muted">Keine Dienste.</li>'}</ul>
+  </section>`;
+}
+
+function planTable(data, month, me) {
   const today = todayIso();
   const head = month.days.map(d => {
     const hol = holidayOf(d.date);
-    const c = [isWeekendOrHoliday(d.date) && !hol ? 'we' : '', hol ? 'hol' : '', d.date === today ? 'today' : ''].join(' ');
-    return `<th class="${c}" title="${esc(hol || '')}">${WT[dow(d.date)].slice(0, 2)}<br>${+d.date.slice(8)}</th>`;
+    const c = [isWeekendOrHoliday(d.date) ? 'we' : '', hol ? 'hol' : '', d.date === today ? 'today' : ''].join(' ');
+    return `<th class="${c}" title="${esc(hol || '')}">${WT[dow(d.date)]}<br>${+d.date.slice(8)}</th>`;
   }).join('');
+  const oaRow = `<tr class="oa-row"><th class="name">OA</th>${month.days.map(d => `<td title="${esc(oaOf(d).map(oaName).join(', '))}">${esc(oaOf(d).join('/'))}</td>`).join('')}<td class="cnt"></td></tr>`;
   const body = data.people.map(a => {
     let n = 0;
     const cells = month.days.map(d => {
@@ -424,23 +566,14 @@ function viewTeam(data, month) {
       if (!p) return `<td class="${we}"></td>`;
       return `<td class="${STATUS[p].cls}${p === 'vb' ? we : ''}" title="${esc(fmtDay(d.date) + ': ' + statusesOf(d, a).map(s => STATUS[s].label).join(', '))}">${STATUS[p].short}</td>`;
     }).join('');
-    return `<tr class="${a === state.person ? 'me' : ''}"><th class="name" title="${esc(personName(a))}">${esc(a)}</th>${cells}<td class="cnt" title="Dienste">${n}</td></tr>`;
+    return `<tr class="${a === me ? 'me' : ''}"><th class="name" title="${esc(personName(a))}">${esc(surname(a))}</th>${cells}<td class="cnt" title="Dienste">${n}</td></tr>`;
   }).join('');
-
-  // Dienst-Zeile oben: wer hat an welchem Tag Dienst
-  return `
-    <section class="card">
-      <h2>Team · ${monthLabel(state.month)}</h2>
-      <div class="matrix-wrap"><table class="matrix">
-        <thead><tr><th class="name"></th>${head}<th title="Dienste">Σ</th></tr></thead>
-        <tbody>${body}</tbody>
-      </table></div>
-      ${legend(['dienst', 'frei', 'urlaub', 'fb', 'wrt', 'efrei', 'gm', 'abw', 'vb'])}
-    </section>
-    <section class="card">
-      <h2>Kürzel</h2>
-      <ul class="list">${data.people.map(a => `<li><span class="when">${esc(a)}</span>${esc(personName(a))}</li>`).join('')}</ul>
-    </section>`;
+  return `<div class="matrix-wrap"><table class="matrix">
+      <thead><tr><th class="name"></th>${head}<th title="Dienste">Σ</th></tr></thead>
+      <tbody>${oaRow}${body}</tbody>
+    </table></div>
+    ${legend(['dienst', 'frei', 'urlaub', 'fb', 'wrt', 'efrei', 'gm', 'abw', 'vb'])}
+    <p class="muted small">D = Dienst · f = frei nach Dienst · U = Urlaub · W = Wochenruhetag · E = Ersatzfrei · · = im Haus</p>`;
 }
 
 function findDay(data, date) {
@@ -448,42 +581,43 @@ function findDay(data, date) {
   return m && m.days.find(d => d.date === date);
 }
 
+// ---------------------------------------------------------------------------
+// Tag
+// ---------------------------------------------------------------------------
+
 function viewDay(data) {
-  const keys = [...data.months.keys()].sort();
-  const min = data.months.get(keys[0]).days[0].date;
-  const lastM = data.months.get(keys[keys.length - 1]);
-  const max = lastM.days[lastM.days.length - 1].date;
-  if (state.day < min || state.day > max || !findDay(data, state.day)) {
-    state.day = state.month + '-01';
-  }
+  const days = allDays(data);
+  const min = days[0].date, max = days[days.length - 1].date;
+  if (!findDay(data, state.day)) state.day = todayIso() >= min && todayIso() <= max ? todayIso() : state.month + '-01';
   const d = findDay(data, state.day);
-  // "Im Haus" nur, wer an dem Tag nichts anderes eingetragen hat
+  const me = state.person;
   const who = st => data.people.filter(a => st === 'vb' ? primary(d, a) === 'vb' : statusesOf(d, a).includes(st));
-  const names = arr => arr.length ? arr.map(a => `<span title="${esc(personName(a))}">${esc(personName(a).replace(/^Dr\.(in)? /, ''))}</span>`).join('<br>') : '<span class="muted">–</span>';
+  const names = arr => arr.length ? arr.map(a => `<span class="nm${a === me ? ' me' : ''}">${esc(plainName(a))}</span>`).join('') : '<span class="muted">–</span>';
+  const dienst = who('dienst');
   const next = findDay(data, addDays(state.day, 1));
-  const nextDienst = next ? data.people.filter(a => statusesOf(next, a).includes('dienst')) : [];
   const hol = holidayOf(state.day);
 
   const slots = [
-    ['frei', 'Frei nach Dienst'], ['vb', 'Im Haus (VB)'], ['gm', 'Gmunden'], ['urlaub', 'Urlaub'],
+    ['frei', 'Frei nach Dienst'], ['vb', 'Im Haus'], ['gm', 'Gmunden'], ['urlaub', 'Urlaub'],
     ['fb', 'Fortbildung'], ['wrt', 'Wochenruhetag'], ['efrei', 'Ersatzfrei'], ['abw', 'Abwesend'],
-  ].filter(([st]) => st === 'vb' || st === 'frei' || who(st).length)
+  ].filter(([st]) => who(st).length)
     .map(([st, t]) => `<div class="slot"><h3>${t}</h3><div class="names">${names(who(st))}</div></div>`).join('');
 
   return `
     <section class="card">
       <div class="day-picker">
         <button class="btn secondary" data-day="-1" aria-label="Vorheriger Tag">‹</button>
-        <input type="date" id="dayInput" value="${state.day}" min="${min}" max="${max}">
+        <input type="date" id="dayInput" value="${state.day}" min="${min}" max="${max}" aria-label="Datum">
         <button class="btn secondary" data-day="1" aria-label="Nächster Tag">›</button>
         <button class="btn secondary" data-day="today">Heute</button>
       </div>
-      <h2 style="margin-top:14px">${fmtLong(state.day)}${hol ? ` <span class="muted">· ${esc(hol)}</span>` : ''}</h2>
-      <div class="day-grid">
-        <div class="slot big"><h3>Dienst</h3><div class="names">${names(who('dienst'))}</div></div>
-        ${slots}
+      <h2 class="day-title">${fmtLong(state.day)} <span class="muted">· ${relDays(state.day)}</span>${hol ? ` <span class="chip chip-hol">${esc(hol)}</span>` : ''}</h2>
+      <div class="duty">
+        <div class="duty-col"><h3>Dienst Assistenz</h3><div class="duty-name">${dienst.length ? dienst.map(a => esc(plainName(a)) + (a === me ? ' <span class="me-badge">Du</span>' : '')).join('<br>') : '–'}</div></div>
+        <div class="duty-col"><h3>OA im Dienst</h3><div class="duty-name">${oaOf(d).length ? oaOf(d).map(k => esc(oaName(k))).join('<br>') : '<span class="dim">nicht eingetragen</span>'}</div></div>
       </div>
-      ${nextDienst.length ? `<p class="muted small" style="margin-top:12px">Dienst am ${fmtDay(next.date)}: <strong>${nextDienst.map(a => esc(personName(a))).join(', ')}</strong></p>` : ''}
+      ${slots ? `<div class="day-grid">${slots}</div>` : ''}
+      ${next && dienstOf(next, data).length ? `<p class="muted small" style="margin-top:12px">Dienst am ${fmtDay(next.date)}: <strong>${dienstOf(next, data).map(a => esc(plainName(a))).join(', ')}</strong>${oaOf(next).length ? ` mit ${oaOf(next).map(k => esc(oaShort(k))).join(' / ')}` : ''}</p>` : ''}
       ${d.note ? `<div class="note">${esc(d.note)}</div>` : ''}
     </section>`;
 }
@@ -643,10 +777,18 @@ document.addEventListener('submit', async e => {
 });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('button, [data-person]');
+  const t = e.target.closest('button, [data-person], [data-goto]');
   if (!t) return;
-  if (t.classList.contains('tab')) { state.view = t.dataset.view; safeSet('dp.view', state.view); render(); }
-  else if (t.dataset.person) { state.person = t.dataset.person; safeSet('dp.person', state.person); render(); }
+  if (t.classList.contains('tab')) {
+    state.view = t.dataset.view; safeSet('dp.view', state.view);
+    if (state.view === 'day') state.day = todayIso();
+    state.scrollToday = state.view === 'plan';
+    render(); window.scrollTo(0, 0);
+  }
+  else if (t.dataset.person) { state.person = t.dataset.person; state.choosing = false; safeSet('dp.person', state.person); render(); window.scrollTo(0, 0); }
+  else if (t.dataset.action === 'choose') { state.choosing = true; render(); }
+  else if (t.dataset.mode) { state.planMode = t.dataset.mode; safeSet('dp.planMode', state.planMode); render(); }
+  else if (t.dataset.goto) { state.day = t.dataset.goto; state.month = state.day.slice(0, 7); state.view = 'day'; render(); window.scrollTo(0, 0); }
   else if (t.id === 'prevMonth' || t.id === 'nextMonth') {
     if (!state.data) return;
     const keys = [...state.data.months.keys()].sort();
@@ -670,6 +812,7 @@ document.addEventListener('change', e => {
     if (!state.data.months.has(state.month)) state.month = pickMonth(state.data);
     render();
   }
+  if (e.target.id === 'onlyMine') { state.onlyMine = e.target.checked; safeSet('dp.onlyMine', state.onlyMine ? '1' : '0'); render(); }
   if (e.target.id === 'fileInput' && e.target.files.length) { previewFiles(e.target.files); e.target.value = ''; }
 });
 
