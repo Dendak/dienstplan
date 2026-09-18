@@ -517,8 +517,12 @@ function viewPlan(data, month) {
       <button class="${mode === 'list' ? 'on' : ''}" data-mode="list">Liste</button>
       <button class="${mode === 'table' ? 'on' : ''}" data-mode="table">Tabelle</button>
     </div>
-    ${me && mode === 'list' ? `<label class="switch"><input type="checkbox" id="onlyMine" ${onlyMine ? 'checked' : ''}> nur meine Dienste</label>` : ''}
-  </div>`;
+    <div class="pc-right">
+      ${me && mode === 'list' ? `<label class="switch"><input type="checkbox" id="onlyMine" ${onlyMine ? 'checked' : ''}> nur meine</label>` : ''}
+      <button class="btn secondary btn-sm${state.exportOpen ? ' on' : ''}" data-action="export-toggle" aria-expanded="${!!state.exportOpen}">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Export</button>
+    </div>
+  </div>${exportPanel(data)}`;
 
   if (mode === 'table') return `<section class="card">${controls}${planTable(data, month, me)}</section>`;
 
@@ -547,6 +551,93 @@ function viewPlan(data, month) {
     ${controls}
     <ul class="dlist plan">${rows || '<li class="muted">Keine Dienste.</li>'}</ul>
   </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Export ganzer Monate (Excel / PDF)
+// ---------------------------------------------------------------------------
+
+function exportPanel(data) {
+  if (!state.exportOpen) return '';
+  const keys = [...data.months.keys()].sort();
+  if (!state.exportSel) state.exportSel = new Set([state.month]);
+  const dis = state.exportSel.size ? '' : 'disabled';
+  return `<div class="export-panel">
+    <h3>Monate exportieren</h3>
+    <div class="exp-months">${keys.map(k => `<label class="exp-month${state.exportSel.has(k) ? ' on' : ''}">
+      <input type="checkbox" class="exp-check" value="${k}" ${state.exportSel.has(k) ? 'checked' : ''}>${monthLabel(k)}</label>`).join('')}</div>
+    <div class="row-actions">
+      <button class="btn" data-action="export-pdf" ${dis}>PDF / Drucken</button>
+      <button class="btn secondary" data-action="export-xlsx" ${dis}>Excel (.xlsx)</button>
+    </div>
+    <p class="muted small">PDF: im Druckdialog „Als PDF speichern“ wählen. Jeder Monat kommt auf eine eigene Seite (A4 quer).</p>
+  </div>`;
+}
+
+const EXPORT_COLS = [
+  ['dienst', 'Dienst Assistenz'], ['oa', 'OA'], ['frei', 'Frei nach Dienst'], ['urlaub', 'Urlaub'],
+  ['wrt', 'Wochenruhetag'], ['efrei', 'Ersatzfrei'], ['fb', 'Fortbildung'], ['gm', 'Gmunden'], ['abw', 'Abwesend'],
+];
+
+/** Eine Zeile pro Tag, je Spalte die Namen. */
+function exportRows(data, m) {
+  return m.days.map(d => {
+    const row = { date: d.date, hol: holidayOf(d.date) || '', note: d.note || '' };
+    for (const [st] of EXPORT_COLS) {
+      row[st] = st === 'oa' ? oaOf(d).map(oaShort).join(', ')
+        : data.people.filter(a => statusesOf(d, a).includes(st) && (st === 'dienst' || !statusesOf(d, a).includes('dienst')))
+            .map(st === 'dienst' ? plainName : surname).join(', ');
+    }
+    return row;
+  });
+}
+function dienstCounts(data, m) {
+  return data.people.map(a => [a, m.days.filter(d => statusesOf(d, a).includes('dienst')).length]).filter(([, n]) => n);
+}
+const selectedMonths = data => [...state.exportSel].filter(k => data.months.has(k)).sort().map(k => data.months.get(k));
+
+function exportXlsx() {
+  const data = state.data;
+  const wb = XLSX.utils.book_new();
+  const months = selectedMonths(data);
+  for (const m of months) {
+    const head = ['Datum', 'Tag', ...EXPORT_COLS.map(c => c[1]), 'Feiertag', 'Besonderheiten'];
+    const rows = exportRows(data, m).map(r => {
+      const [y, mo, d] = r.date.split('-');
+      return [`${d}.${mo}.${y}`, WT[dow(r.date)], ...EXPORT_COLS.map(c => r[c[0]]), r.hol, r.note];
+    });
+    const counts = dienstCounts(data, m);
+    const aoa = [[`Dienstplan Assistenz – ${monthLabel(m.key)}`], [], head, ...rows, [], ['Dienste'], ...counts.map(([a, n]) => [plainName(a), n])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 11 }, { wch: 4 }, { wch: 22 }, { wch: 14 }, ...EXPORT_COLS.slice(2).map(() => ({ wch: 16 })), { wch: 18 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws, monthLabel(m.key).slice(0, 31));
+  }
+  const keys = months.map(m => m.key);
+  const name = keys.length === 1 ? keys[0] : `${keys[0]}_bis_${keys[keys.length - 1]}`;
+  XLSX.writeFile(wb, `Dienstplan_Assistenz_${name}.xlsx`);
+}
+
+function exportPdf() {
+  const data = state.data;
+  const pages = selectedMonths(data).map(m => {
+    const rows = exportRows(data, m);
+    const used = EXPORT_COLS.filter(([st]) => st === 'dienst' || st === 'oa' || rows.some(r => r[st]));
+    const body = rows.map(r => `<tr class="${isWeekendOrHoliday(r.date) ? 'we' : ''}">
+      <td class="pd">${+r.date.slice(8)}.</td><td class="pw">${WT[dow(r.date)]}</td>
+      ${used.map(([st]) => `<td class="${st === 'dienst' ? 'pdienst' : ''}">${esc(r[st])}</td>`).join('')}
+      <td class="pn">${esc([r.hol, r.note].filter(Boolean).join(' · '))}</td></tr>`).join('');
+    const counts = dienstCounts(data, m).map(([a, n]) => `${esc(surname(a))} ${n}`).join(' · ');
+    return `<section class="ppage">
+      <header><h1>Dienstplan Assistenz – ${monthLabel(m.key)}</h1><span>Frauenheilkunde &amp; Geburtshilfe · Vöcklabruck</span></header>
+      <table><thead><tr><th colspan="2">Datum</th>${used.map(([, l]) => `<th>${l}</th>`).join('')}<th>Feiertag / Bemerkung</th></tr></thead><tbody>${body}</tbody></table>
+      <footer>Dienste: ${counts} · Stand ${new Date().toLocaleDateString('de-AT')}</footer>
+    </section>`;
+  }).join('');
+  $('#printArea').innerHTML = pages;
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); $('#printArea').innerHTML = ''; window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  setTimeout(() => window.print(), 50);
 }
 
 function planTable(data, month, me) {
@@ -787,6 +878,9 @@ document.addEventListener('click', e => {
   }
   else if (t.dataset.person) { state.person = t.dataset.person; state.choosing = false; safeSet('dp.person', state.person); render(); window.scrollTo(0, 0); }
   else if (t.dataset.action === 'choose') { state.choosing = true; render(); }
+  else if (t.dataset.action === 'export-toggle') { state.exportOpen = !state.exportOpen; state.exportSel = null; render(); }
+  else if (t.dataset.action === 'export-xlsx') exportXlsx();
+  else if (t.dataset.action === 'export-pdf') exportPdf();
   else if (t.dataset.mode) { state.planMode = t.dataset.mode; safeSet('dp.planMode', state.planMode); render(); }
   else if (t.dataset.goto) { state.day = t.dataset.goto; state.month = state.day.slice(0, 7); state.view = 'day'; render(); window.scrollTo(0, 0); }
   else if (t.id === 'prevMonth' || t.id === 'nextMonth') {
@@ -810,6 +904,10 @@ document.addEventListener('change', e => {
   if (e.target.id === 'dayInput' && e.target.value) {
     state.day = e.target.value; state.month = state.day.slice(0, 7);
     if (!state.data.months.has(state.month)) state.month = pickMonth(state.data);
+    render();
+  }
+  if (e.target.classList.contains('exp-check')) {
+    if (e.target.checked) state.exportSel.add(e.target.value); else state.exportSel.delete(e.target.value);
     render();
   }
   if (e.target.id === 'onlyMine') { state.onlyMine = e.target.checked; safeSet('dp.onlyMine', state.onlyMine ? '1' : '0'); render(); }

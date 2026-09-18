@@ -308,6 +308,39 @@ table.matrix { border-collapse: separate; border-spacing: 2px; font-size: 12px; 
 #dropOverlay { position: fixed; inset: 0; background: rgba(121,3,67,.88); color: #fff; display: grid; place-items: center; font-size: 22px; font-weight: 700; z-index: 50; }
 #dropOverlay[hidden] { display: none; }
 
+.pc-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.btn-sm { padding: 7px 12px; font-size: 14px; }
+.btn.secondary.on { background: var(--accent); color: #fff; }
+.btn:disabled { opacity: .45; cursor: default; }
+.export-panel { background: var(--surface-2); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.export-panel h3 { margin: 0 0 10px; font-size: 14px; }
+.exp-months { display: flex; flex-wrap: wrap; gap: 8px; }
+.exp-month { display: inline-flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-weight: 500; }
+.exp-month.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.exp-month input { accent-color: var(--accent); margin: 0; }
+#printArea { display: none; }
+
+@media print {
+  body.printing > *:not(#printArea) { display: none !important; }
+  body.printing #printArea { display: block; }
+  body.printing { background: #fff; color: #000; font-size: 10.5px; }
+  .ppage { break-after: page; }
+  .ppage:last-child { break-after: auto; }
+  .ppage header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #ab045e; padding-bottom: 4px; margin-bottom: 6px; }
+  .ppage h1 { font-size: 16px; color: #ab045e; }
+  .ppage header span { color: #555; }
+  .ppage table { width: 100%; border-collapse: collapse; }
+  .ppage th { text-align: left; background: #ab045e; color: #fff; padding: 3px 5px; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .ppage td { border-bottom: 1px solid #ddd; padding: 2.5px 5px; vertical-align: top; }
+  .ppage tr.we td { background: #f3e6ed; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .ppage .pd { width: 22px; text-align: right; font-weight: 700; }
+  .ppage .pw { width: 22px; color: #555; }
+  .ppage .pdienst { font-weight: 700; }
+  .ppage .pn { color: #555; }
+  .ppage footer { margin-top: 6px; color: #555; }
+}
+@page { size: A4 landscape; margin: 10mm; }
+
 @media print {
   .top { position: static; }
   .tabs, .foot, .month-nav button, .row-actions { display: none !important; }
