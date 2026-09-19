@@ -14,7 +14,12 @@ const ASSISTENZ = {
   Mas:  'Dr.in Karolina Masarova',
   Mo:   'Dr. Majed Mohammad',
   San:  'Dr.in Sofia Santesteban',
+  Ah:   'Ah',   // Name noch unbekannt
+  El:   'El',   // Name noch unbekannt
 };
+
+// Tippvarianten aus den Excel-Dateien → Kürzel
+const ALIAS = { kh: 'Khri', sa: 'San', alshebly: 'Al', wa: 'Was', bra: 'Br', put: 'Pu' };
 
 // Primar/Oberärzt:innen – werden als "OA im Dienst" angezeigt (Spalte ND1)
 const OA_NAMEN = {
@@ -25,12 +30,21 @@ const OA_NAMEN = {
   Ki:  'OA Dr. Dovydas Kindurys',
   Pu:  'OA Dr. Christian Puttinger',
   Ra:  'OÄ Dr.in Jovana Radojevic',
+  Sd:  'OÄ Dr.in Anita Schild',
+  Pf:  'Pfleger',
+  Bl:  'Bleier',
+  Ba:  'Baschata',
+  Sch: 'Schweiger',
+  Kr:  'Krupitz',
+  Le:  'Lechner',
 };
-const OA_KUERZEL = [...Object.keys(OA_NAMEN), 'Pf', 'Bl', 'Ba', 'Ko', 'Sch'];
+// weitere bekannte Kürzel (kein Tippfehler): Ko, Grü, Kl = Turnusärztin
+const OA_KUERZEL = [...Object.keys(OA_NAMEN), 'Ko', 'Grü', 'Kl'];
 
 // Spaltenüberschrift (Zeile 1 im Excel) → Status
 const SPALTEN = {
-  'nd1': 'dienst', 'nd2': 'dienst', 'nd3': 'dienst',
+  'nd1': 'oadienst', 'nd2': 'dienst', 'nd3': 'dienst3',
+  'vb': 'vb', 'bis16.00': 'bis16',
   'fb': 'fb',
   'urlaub': 'urlaub',
   'krank': 'abw',
@@ -119,24 +133,42 @@ const isWeekendOrHoliday = s => { const w = dow(s); return w === 0 || w === 6 ||
 // Excel einlesen
 // ---------------------------------------------------------------------------
 
+/** "Pu,Wa", "Pu Mo", "PuWa", "Br(K)", "San?" … → einzelne Kürzel */
 function splitNames(v) {
   if (v == null) return [];
-  return String(v).split(/[,;\/+\n]/).map(t => ({ raw: t, name: t.trim() })).filter(t => t.name);
+  const raw = String(v);
+  return raw.replace(/\([^)]*\)/g, ' ')
+    .replace(/([a-zäöüß])([A-ZÄÖÜ])/g, '$1,$2')
+    .split(/[,;\/+\n\s]+/)
+    .map(t => t.replace(/[.?!:]+$/, ''))
+    .filter(t => /^[A-Za-zÄÖÜäöüß]{1,5}$/.test(t) || ALIAS[t.toLowerCase()])
+    .map(t => ({ raw, name: ALIAS[t.toLowerCase()] || t }));
 }
 
 /** Liest ein Tabellenblatt; liefert null, wenn es kein Monatsblatt ist. */
 function parseSheet(ws, sheetName, source) {
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-  if (!rows.length || typeof rows[0][0] !== 'number') return null;
+  // Kopfzeile = erste Zeile mit „ND2“ (neue Pläne: Zeile 1, alte: Zeile 3)
+  const norm = v => headerText(v).toLowerCase().replace(/\s+/g, '');
+  const h = rows.slice(0, 6).findIndex(r => r && r.some(v => norm(v) === 'nd2'));
+  if (h < 0) return null;
+  const baseRow = rows.slice(0, h + 1).find(r => typeof r[0] === 'number' && r[0] > 30000);
+  if (!baseRow) return null;
+  const base = serialToIso(baseRow[0]);
 
-  const cols = rows[0].map(v => SPALTEN[headerText(v).toLowerCase().replace(/\s+/g, '')] || null);
+  const cols = rows[h].map(v => SPALTEN[norm(v)] || null);
   const days = [];
   const tokens = []; // für die Prüfung
-  let r = 1;
+  let r = h + 1, prevDay = 0;
   for (; r < rows.length; r++) {
     const row = rows[r];
-    if (typeof row[0] !== 'number' || row[0] < 30000) break;
-    const date = serialToIso(row[0]);
+    if (!row || typeof row[0] !== 'number') break;
+    let date;
+    if (row[0] > 30000) date = serialToIso(row[0]);
+    else if (row[0] >= 1 && row[0] <= 31 && row[0] > prevDay) date = base.slice(0, 8) + pad(row[0]); // altes Format: nur Tageszahl
+    else break;
+    prevDay = +date.slice(8);
+    if (date.slice(0, 7) !== base.slice(0, 7)) continue;
     const day = { date, entries: {}, note: '' };
     cols.forEach((st, c) => {
       if (!st || row[c] == null || row[c] === '') return;
@@ -175,12 +207,17 @@ function buildData(sheets) {
   const known = new Set(Object.keys(ASSISTENZ));
   const oa = new Set(OA_KUERZEL.map(x => x.toLowerCase()));
   const found = new Set();
+  const nd2 = new Set();
   for (const m of months.values()) {
     m.listed.forEach(a => found.add(a));
-    m.tokens.forEach(t => { if (t.status === 'vb') found.add(t.name); });
+    m.tokens.forEach(t => { if (t.status === 'vb') found.add(t.name); if (t.status === 'dienst') nd2.add(t.name); });
   }
   const canon = new Map();
-  [...known, ...found].forEach(a => { if (!oa.has(a.toLowerCase())) canon.set(a.toLowerCase(), canon.get(a.toLowerCase()) || a); });
+  const nd2l = new Set([...nd2].map(x => x.toLowerCase()));
+  [...known, ...found, ...nd2].forEach(a => {
+    const k = a.toLowerCase();
+    if (!oa.has(k) || nd2l.has(k)) canon.set(k, canon.get(k) || [...known].find(x => x.toLowerCase() === k) || a);
+  });
 
   // Einträge normalisieren (Groß/Klein, Leerzeichen) und auf Assistenz beschränken
   for (const m of months.values()) {
@@ -188,23 +225,25 @@ function buildData(sheets) {
       const norm = {};
       d.oa = [];
       for (const [n, set] of Object.entries(d.entries)) {
+        if (set.has('oadienst')) d.oa.push(n);
         const a = canon.get(n.toLowerCase());
-        if (!a) { if (set.has('dienst')) d.oa.push(n); continue; }
+        if (!a) continue;
         norm[a] ||= new Set();
-        set.forEach(s => norm[a].add(s));
+        set.forEach(s => norm[a].add(s === 'dienst3' ? 'dienst' : s));
       }
       d.entries = norm;
     }
     // Monate ohne einen einzigen Dienst gelten als leer (z. B. leere Jahresvorlage)
     m.hasDienst = m.days.some(d => Object.values(d.entries).some(s => s.has('dienst')));
+    m.hasData = m.hasDienst || m.days.some(d => Object.values(d.entries).some(s => [...s].some(x => x !== 'vb')));
   }
-  for (const [k, m] of months) if (!m.hasDienst) months.delete(k);
+  for (const [k, m] of months) if (!m.hasData) months.delete(k);
 
   // Personen sortieren: bekannte zuerst in Konfig-Reihenfolge, dann weitere
   const active = new Set();
   // (bekannte Assistenz, sobald sie vorkommt; andere Kürzel nur, wenn sie Dienste haben)
   for (const m of months.values()) for (const d of m.days) for (const [a, set] of Object.entries(d.entries)) {
-    if (known.has(a) || set.has('dienst')) active.add(a);
+    if (known.has(a) || (set.has('dienst') && nd2.has(a))) active.add(a);
   }
   const people = [...canon.values()].filter(a => active.has(a))
     .sort((a, b) => (known.has(b) - known.has(a)) || a.localeCompare(b, 'de'));
@@ -229,9 +268,9 @@ const state = {
   person: safeGet('dp.person') || '',
   month: null, day: todayIso(), sourceInfo: '',
   enc: null, password: null, files: [], pending: null, locked: false, lockError: '',
-  planMode: safeGet('dp.planMode') || 'list', onlyMine: safeGet('dp.onlyMine') === '1', choosing: false, scrollToday: false,
+  planMode: safeGet('dp.planMode') || 'list', onlyMine: safeGet('dp.onlyMine') === '1', choosing: false, scrollToday: false, year: null, yearMetric: safeGet('dp.yearMetric') || 'urlaub',
 };
-if (!['me', 'plan', 'day'].includes(state.view)) state.view = 'me';
+if (!['me', 'plan', 'day', 'year'].includes(state.view)) state.view = 'me';
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* egal */ } }
 function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function safeDel(k) { try { localStorage.removeItem(k); } catch (e) { /* egal */ } }
@@ -344,8 +383,9 @@ function render() {
   $('#nextMonth').disabled = idx >= keys.length - 1;
 
   const month = data.months.get(state.month);
-  $('#monthNav').hidden = state.view === 'day';
+  $('#monthNav').hidden = state.view === 'day' || state.view === 'year';
   if (state.view === 'plan') app.innerHTML = viewPlan(data, month);
+  else if (state.view === 'year') app.innerHTML = viewYear(data);
   else if (state.view === 'day') app.innerHTML = viewDay(data);
   else app.innerHTML = viewMe(data, month);
   renderChecks();
@@ -554,6 +594,106 @@ function viewPlan(data, month) {
 }
 
 // ---------------------------------------------------------------------------
+// Jahresübersicht (Urlaub / Dienste pro Person und Monat)
+// ---------------------------------------------------------------------------
+
+const isWorkday = s => { const w = dow(s); return w !== 0 && w !== 6 && !holidayOf(s); };
+const YEAR_METRICS = {
+  urlaub:   { label: 'Urlaub', unit: 'Arbeitstage', hint: 'Urlaubstage Mo–Fr ohne Feiertage', test: (d, a) => statusesOf(d, a).includes('urlaub') && isWorkday(d.date) },
+  urlaubKT: { label: 'Urlaub (Kalendertage)', unit: 'Kalendertage', hint: 'alle eingetragenen Urlaubstage inkl. Wochenende', test: (d, a) => statusesOf(d, a).includes('urlaub') },
+  dienst:   { label: 'Dienste', unit: 'Dienste', hint: 'Nachtdienste (ND2 + ND3)', test: (d, a) => statusesOf(d, a).includes('dienst') },
+  weDienst: { label: 'WE/Feiertag-Dienste', unit: 'Dienste', hint: 'Dienste an Sa, So und Feiertagen', test: (d, a) => statusesOf(d, a).includes('dienst') && isWeekendOrHoliday(d.date) },
+  efrei:    { label: 'Ersatzfrei + WRT', unit: 'Tage', hint: 'Ersatzfrei und Wochenruhetage', test: (d, a) => statusesOf(d, a).some(s => s === 'efrei' || s === 'wrt') },
+};
+
+function yearsOf(data) { return [...new Set([...data.months.keys()].map(k => k.slice(0, 4)))].sort(); }
+
+/** Werte je Person × Monat für ein Jahr; null = Monat nicht im Plan. */
+function yearTable(data, year, metric) {
+  const test = YEAR_METRICS[metric].test;
+  const keys = Array.from({ length: 12 }, (_, i) => `${year}-${pad(i + 1)}`);
+  const rows = data.people.map(a => {
+    const vals = keys.map(k => { const m = data.months.get(k); return m ? m.days.filter(d => test(d, a)).length : null; });
+    return { a, vals, sum: vals.reduce((x, v) => x + (v || 0), 0) };
+  }).filter(r => r.vals.some(v => v));
+  return { keys, rows, missing: keys.filter(k => !data.months.has(k)) };
+}
+
+/** Datumsbereiche für Tooltip, z. B. „3.–7.8., 24.8.“ */
+function ranges(days) {
+  const out = [];
+  for (const d of days) {
+    const last = out[out.length - 1];
+    if (last && addDays(last[1], 1) === d) last[1] = d; else out.push([d, d]);
+  }
+  const f = s => `${+s.slice(8)}.${+s.slice(5, 7)}.`;
+  return out.map(([x, y]) => x === y ? f(x) : x.slice(0, 7) === y.slice(0, 7) ? `${+x.slice(8)}.–${f(y)}` : `${f(x)}–${f(y)}`).join(', ');
+}
+
+function viewYear(data) {
+  const years = yearsOf(data);
+  if (!years.includes(state.year)) state.year = years.includes(state.month.slice(0, 4)) ? state.month.slice(0, 4) : years[years.length - 1];
+  const metric = YEAR_METRICS[state.yearMetric] ? state.yearMetric : 'urlaub';
+  const { keys, rows, missing } = yearTable(data, state.year, metric);
+  const max = Math.max(1, ...rows.flatMap(r => r.vals.map(v => v || 0)));
+  const me = state.person;
+  const test = YEAR_METRICS[metric].test;
+
+  const head = keys.map(k => `<th class="${data.months.has(k) ? '' : 'miss'}" title="${data.months.has(k) ? '' : 'Kein Plan geladen'}">${MONATE[+k.slice(5) - 1].slice(0, 3)}</th>`).join('');
+  const body = rows.map(r => `<tr class="${r.a === me ? 'me' : ''}">
+      <th class="name" title="${esc(personName(r.a))}">${esc(plainName(r.a))}</th>
+      ${r.vals.map((v, i) => {
+        if (v === null) return '<td class="miss">–</td>';
+        if (!v) return '<td class="zero">·</td>';
+        const days = data.months.get(keys[i]).days.filter(d => test(d, r.a)).map(d => d.date);
+        return `<td class="val" data-month="${keys[i]}" style="--i:${(0.18 + 0.82 * v / max).toFixed(2)};color:${v / max > 0.45 ? '#fff' : 'var(--text)'}" title="${esc(ranges(days))}">${v}</td>`;
+      }).join('')}
+      <td class="sum">${r.sum}</td></tr>`).join('');
+  const colSum = keys.map((k, i) => data.months.has(k) ? rows.reduce((x, r) => x + (r.vals[i] || 0), 0) : '');
+
+  return `<section class="card">
+    <div class="card-head">
+      <h2>Jahresübersicht ${years.length > 1 ? `<select id="yearSel" aria-label="Jahr">${years.map(y => `<option ${y === state.year ? 'selected' : ''}>${y}</option>`).join('')}</select>` : state.year}</h2>
+      <button class="btn secondary btn-sm" data-action="year-xlsx">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Excel</button>
+    </div>
+    <div class="metric-chips" role="group" aria-label="Kennzahl">${Object.entries(YEAR_METRICS).map(([k, m]) =>
+      `<button class="mchip${k === metric ? ' on' : ''}" data-metric="${k}">${m.label}</button>`).join('')}</div>
+    <p class="muted small">${YEAR_METRICS[metric].hint}. Auf eine Zahl tippen öffnet den Monat; Maus darüber zeigt die Tage.</p>
+    ${rows.length ? `<div class="matrix-wrap"><table class="ytable">
+      <thead><tr><th class="name"></th>${head}<th>Σ</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><th class="name">Summe</th>${colSum.map(v => `<td>${v}</td>`).join('')}<td class="sum">${colSum.reduce((x, v) => x + (v || 0), 0)}</td></tr></tfoot>
+    </table></div>` : '<p class="muted">Keine Einträge.</p>'}
+    ${missing.length ? `<p class="muted small">Ohne Plan: ${missing.map(k => MONATE[+k.slice(5) - 1]).join(', ')}.</p>` : ''}
+  </section>`;
+}
+
+function exportYearXlsx() {
+  const data = state.data, year = state.year;
+  const wb = XLSX.utils.book_new();
+  for (const [k, m] of Object.entries(YEAR_METRICS)) {
+    const { keys, rows, missing } = yearTable(data, year, k);
+    const aoa = [[`${m.label} ${year} – ${m.hint}`], [],
+      ['Name', 'Kürzel', ...keys.map(x => MONATE[+x.slice(5) - 1]), 'Summe'],
+      ...rows.map(r => [plainName(r.a), r.a, ...r.vals.map(v => v === null ? '' : v), r.sum]),
+      [], ...(missing.length ? [[`Kein Plan für: ${missing.map(x => MONATE[+x.slice(5) - 1]).join(', ')}`]] : [])];
+    if (k === 'urlaub' || k === 'urlaubKT') {
+      aoa.push([], ['Urlaubstage im Detail']);
+      const t = YEAR_METRICS[k].test;
+      for (const r of rows) {
+        const days = keys.filter(x => data.months.has(x)).flatMap(x => data.months.get(x).days.filter(d => t(d, r.a)).map(d => d.date));
+        aoa.push([plainName(r.a), r.a, ranges(days)]);
+      }
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 24 }, { wch: 7 }, ...keys.map(() => ({ wch: 9 })), { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, m.label.replace(/[\/\\?*\[\]:]/g, '-').slice(0, 31));
+  }
+  XLSX.writeFile(wb, `Jahresuebersicht_Assistenz_${year}.xlsx`);
+}
+
+// ---------------------------------------------------------------------------
 // Export ganzer Monate (Excel / PDF)
 // ---------------------------------------------------------------------------
 
@@ -759,21 +899,22 @@ function runChecks(data) {
   const out = [];
   const months = [...data.months.values()].sort((x, y) => x.key.localeCompare(y.key));
   const absent = ['abw', 'urlaub', 'fb', 'wrt', 'efrei', 'frei'];
+  const cur = todayIso().slice(0, 7);
   for (const m of months) {
+    if (m.key < cur) continue; // vergangene Monate nicht mehr prüfen
     const ml = monthLabel(m.key);
     const spaces = new Set();
     const unknown = new Set();
     for (const t of m.tokens) {
       if (t.status === 'dienst' && /\s$/.test(t.raw)) spaces.add(t.name);
-      if (!data.canon.has(t.name.toLowerCase()) && !data.oa.has(t.name.toLowerCase())) unknown.add(`„${t.name}“ (${fmtDay(t.date)})`);
+      if (['dienst', 'dienst3', 'urlaub', 'frei', 'efrei', 'wrt', 'fb', 'abw'].includes(t.status) && !data.canon.has(t.name.toLowerCase()) && !data.oa.has(t.name.toLowerCase())) unknown.add(`„${t.name}“ (${fmtDay(t.date)})`);
     }
     if (unknown.size) out.push(['err', `${ml}: Unbekannte Kürzel ${[...unknown].join(', ')} – Tippfehler?`]);
     if (spaces.size) out.push(['warn', `${ml}: Kürzel mit Leerzeichen am Ende im Dienst (${[...spaces].map(s => `„${s} “`).join(', ')}). Die Web-Ansicht zählt sie richtig, aber ZÄHLENWENN im Excel übersieht diese Dienste.`]);
 
     for (const d of m.days) {
       const dienst = data.people.filter(a => statusesOf(d, a).includes('dienst'));
-      if (!dienst.length) out.push(['warn', `${ml}: ${fmtDay(d.date)} ist kein Assistenz-Dienst eingetragen.`]);
-      if (dienst.length > 1) out.push(['warn', `${fmtDay(d.date)}: mehrere Assistenz-Dienste (${dienst.join(', ')}).`]);
+      if (!dienst.length && m.hasDienst) out.push(['warn', `${ml}: ${fmtDay(d.date)} ist kein Assistenz-Dienst eingetragen.`]);
       for (const a of dienst) {
         const sts = statusesOf(d, a).filter(s => absent.includes(s));
         if (sts.length) out.push(['err', `${fmtDay(d.date)}: ${a} hat Dienst, ist aber auch als ${sts.map(s => STATUS[s].label).join(', ')} eingetragen.`]);
@@ -868,7 +1009,7 @@ document.addEventListener('submit', async e => {
 });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('button, [data-person], [data-goto]');
+  const t = e.target.closest('button, [data-person], [data-goto], [data-month]');
   if (!t) return;
   if (t.classList.contains('tab')) {
     state.view = t.dataset.view; safeSet('dp.view', state.view);
@@ -878,6 +1019,9 @@ document.addEventListener('click', e => {
   }
   else if (t.dataset.person) { state.person = t.dataset.person; state.choosing = false; safeSet('dp.person', state.person); render(); window.scrollTo(0, 0); }
   else if (t.dataset.action === 'choose') { state.choosing = true; render(); }
+  else if (t.dataset.metric) { state.yearMetric = t.dataset.metric; safeSet('dp.yearMetric', state.yearMetric); render(); }
+  else if (t.dataset.action === 'year-xlsx') exportYearXlsx();
+  else if (t.dataset.month) { state.month = t.dataset.month; state.view = 'plan'; state.planMode = 'table'; render(); window.scrollTo(0, 0); }
   else if (t.dataset.action === 'export-toggle') { state.exportOpen = !state.exportOpen; state.exportSel = null; render(); }
   else if (t.dataset.action === 'export-xlsx') exportXlsx();
   else if (t.dataset.action === 'export-pdf') exportPdf();
@@ -906,6 +1050,7 @@ document.addEventListener('change', e => {
     if (!state.data.months.has(state.month)) state.month = pickMonth(state.data);
     render();
   }
+  if (e.target.id === 'yearSel') { state.year = e.target.value; render(); }
   if (e.target.classList.contains('exp-check')) {
     if (e.target.checked) state.exportSel.add(e.target.value); else state.exportSel.delete(e.target.value);
     render();
