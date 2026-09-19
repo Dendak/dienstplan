@@ -282,6 +282,39 @@ table.matrix { border-collapse: separate; border-spacing: 2px; font-size: 12px; 
 .people-big .person { border-radius: 14px; padding: 12px; font-size: 15px; }
 .people-big .av { width: 34px; height: 34px; font-size: 12px; }
 
+/* Summen pro Person */
+table.stable { border-collapse: separate; border-spacing: 3px; font-size: 14px; }
+.stable th, .stable td { text-align: center; padding: 0 8px; height: 36px; border-radius: 8px; }
+.stable thead th { font-size: 12px; color: var(--muted); font-weight: 600; line-height: 1.2; max-width: 90px; }
+.stable th.name { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; min-width: 150px; font-weight: 600; white-space: nowrap; }
+.stable tbody td { background: var(--surface-2); font-weight: 700; cursor: pointer; min-width: 64px; }
+.stable td.zero { color: var(--muted); font-weight: 500; }
+.stable .hl { background: color-mix(in srgb, var(--accent) 14%, var(--surface)) !important; color: var(--accent); }
+.stable thead th.hl { color: var(--accent); }
+.stable tr.me th.name { color: var(--accent); }
+.stable tfoot td, .stable tfoot th { color: var(--muted); font-weight: 700; }
+.nm-short { display: none; }
+@media (max-width: 560px) {
+  .nm-full { display: none; } .nm-short { display: inline; }
+  table.stable { font-size: 13.5px; border-spacing: 2px; }
+  .stable th.name { min-width: 84px; }
+  .stable th, .stable td { padding: 0 3px; }
+  .stable tbody td { min-width: 42px; }
+  .stable thead th { font-size: 10.5px; max-width: 56px; }
+}
+.stat-hl { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.stat-hl b { color: var(--accent); }
+
+/* App-Hinweis */
+.install { display: flex; gap: 14px; align-items: flex-start; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.install img { border-radius: 11px; flex: none; }
+.install-body { flex: 1; min-width: 0; }
+.install h2 { margin: 0 0 2px !important; }
+.install .steps { margin: 8px 0; }
+.install .steps svg { vertical-align: -3px; color: #007aff; }
+.install .btn { margin: 8px 0 4px; }
+@media (display-mode: standalone) { .top { padding-top: env(safe-area-inset-top); } }
+
 /* Footer */
 .foot { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
 .foot details { background: var(--surface); border-radius: var(--radius); padding: 12px 16px; box-shadow: var(--shadow); }

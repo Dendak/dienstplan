@@ -22,6 +22,7 @@ const ASSISTENZ = {
 const AUSTRITT = {
   Ah: '2026-07-31',
   El: '2026-06-30',
+  Ra: '2026-06-30', // Assistenz-Dienste bis Juni, danach als OÄ eingeteilt
 };
 
 // Tippvarianten aus den Excel-Dateien → Kürzel
@@ -71,7 +72,7 @@ const STATUS = {
   urlaub: { label: 'Urlaub',            short: 'U',  cls: 's-urlaub', ics: 'Urlaub' },
   fb:     { label: 'Fortbildung',       cal: 'FB', short: 'FB', cls: 's-fb',     ics: 'Fortbildung' },
   wrt:    { label: 'Wochenruhetag',     cal: 'WRT', short: 'W',  cls: 's-wrt',    ics: 'Wochenruhetag' },
-  efrei:  { label: 'Ersatzfrei',        short: 'E',  cls: 's-efrei',  ics: 'Ersatzfrei' },
+  efrei:  { label: 'E-frei (Zeitausgleich)', cal: 'E-frei', short: 'E', cls: 's-efrei', ics: 'E-frei (Zeitausgleich)' },
   frei:   { label: 'Frei nach Dienst',  cal: 'frei', short: 'f',  cls: 's-frei',   ics: 'Frei nach Dienst' },
   gm:     { label: 'Gmunden',           short: 'GM', cls: 's-gm',     ics: 'Gmunden' },
   brz:    { label: 'BRZ',               short: 'BZ', cls: 's-gm' },
@@ -448,8 +449,15 @@ const oaLine = (day, prefix = 'mit ') => {
   return oa.length ? `${prefix}${oa.map(k => `<strong title="${esc(oaName(k))}">${esc(oaShort(k))}</strong>`).join(' / ')}` : '<span class="muted">OA: noch offen</span>';
 };
 
+/** Wer im aktuellen oder einem künftigen Monat Dienst hat (ausgeschiedene nicht zur Auswahl anbieten) */
+function currentPeople(data) {
+  const cur = todayIso().slice(0, 7);
+  const now = data.people.filter(a => a === state.person || [...data.months.values()].some(m => m.key >= cur && m.days.some(d => statusesOf(d, a).includes('dienst'))));
+  return now.length ? now : data.people;
+}
+
 function peoplePicker(data, big) {
-  return `<div class="people${big ? ' people-big' : ''}">${data.people.map(a => `
+  return `<div class="people${big ? ' people-big' : ''}">${currentPeople(data).map(a => `
     <button class="person${a === state.person ? ' active' : ''}" data-person="${esc(a)}">
       ${avatar(a)}<span>${esc(plainName(a))}</span>
     </button>`).join('')}</div>`;
@@ -457,6 +465,37 @@ function peoplePicker(data, big) {
 
 function legend(keys) {
   return `<div class="legend">${keys.map(k => `<span><i class="${STATUS[k].cls}"${k === 'vb' ? ' style="border:1px solid var(--line)"' : ''}></i>${STATUS[k].label}</span>`).join('')}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Als App auf den Startbildschirm
+// ---------------------------------------------------------------------------
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; if (state.data) render(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; safeSet('dp.installDone', '1'); render(); });
+
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isMobile = () => isIOS() || /android/i.test(navigator.userAgent);
+
+function installHint(force) {
+  if (isStandalone()) return force ? `<section class="card install"><p>✓ Die App ist bereits installiert.</p></section>` : '';
+  if (!force && (!isMobile() || safeGet('dp.installHide') || safeGet('dp.installDone'))) return '';
+  const shareIcon = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Teilen"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+  let how;
+  if (installPrompt) how = `<button class="btn" data-action="install">App installieren</button>`;
+  else if (isIOS()) how = `<ol class="steps"><li>In <strong>Safari</strong> unten auf ${shareIcon} <strong>Teilen</strong> tippen</li><li><strong>„Zum Home-Bildschirm“</strong> wählen → <strong>Hinzufügen</strong></li></ol>`;
+  else how = `<ol class="steps"><li>In <strong>Chrome</strong> oben rechts auf <strong>⋮</strong> tippen</li><li><strong>„App installieren“</strong> bzw. <strong>„Zum Startbildschirm hinzufügen“</strong> wählen</li></ol>`;
+  return `<section class="card install">
+    <img src="apple-touch-icon.png" alt="" width="44" height="44">
+    <div class="install-body">
+      <h2>Dienstplan als App</h2>
+      <p class="muted small">Mit eigenem Symbol am Handy – ein Tipp, und du siehst deine Dienste. Funktioniert auch ohne Empfang (letzter Stand).${isIOS() ? ' Beim ersten Öffnen der App einmal das Passwort eingeben.' : ''}</p>
+      ${how}
+      ${force ? '' : '<button class="btn-link" data-action="install-hide">Nicht mehr anzeigen</button>'}
+    </div>
+  </section>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +509,8 @@ function viewMe(data, month) {
       <h2>Wer bist du?</h2>
       <p class="muted">Tippe auf deinen Namen – danach siehst du sofort deine Dienste. Die Auswahl wird nur auf diesem Gerät gespeichert.</p>
       ${peoplePicker(data, true)}
-    </section>`;
+    </section>
+    ${installHint(state.showInstall)}`;
   }
   const today = todayIso();
   const days = allDays(data);
@@ -511,7 +551,7 @@ function viewMe(data, month) {
     </li>`;
   }).join('')}</ul>` : '<p class="muted">In diesem Monat hast du keinen Dienst.</p>';
 
-  // Weitere Einträge (Urlaub, FB, WRT, Ersatzfrei, …)
+  // Weitere Einträge (Urlaub, FB, WRT, E-frei, …)
   const other = [];
   for (const d of month.days) for (const s of statusesOf(d, a)) if (!['vb', 'dienst', 'frei'].includes(s)) {
     const last = other[other.length - 1];
@@ -534,6 +574,8 @@ function viewMe(data, month) {
 
   return `
     ${hero}
+    ${installHint(state.showInstall)}
+    ${myYearCard(data, a)}
     <section class="card">
       <div class="card-head">
         <h2>Meine Dienste <span class="muted">· ${monthLabel(state.month)}</span></h2>
@@ -560,6 +602,22 @@ function viewMe(data, month) {
         <button class="btn secondary" onclick="window.print()">Drucken</button>
       </div>
     </section>`;
+}
+
+function myYearCard(data, a) {
+  const year = state.month.slice(0, 4);
+  const r = yearSums(data, year, [a])[0];
+  if (!r) return '';
+  return `<section class="card">
+    <div class="card-head"><h2>Mein Jahr ${year}</h2><button class="btn-link" data-view-link="year">Alle ansehen</button></div>
+    <div class="stats">
+      <div class="stat"><b>${r.urlaub}</b><span>Urlaub</span></div>
+      <div class="stat"><b>${r.efrei}</b><span>E-frei (ZA)</span></div>
+      <div class="stat stat-hl"><b>${r.frei}</b><span>Urlaub + E-frei</span></div>
+      <div class="stat"><b>${r.dienst}</b><span>Dienste · ${r.weDienst} WE/FT</span></div>
+    </div>
+    <p class="muted small">Urlaub und E-frei in Arbeitstagen (Mo–Fr ohne Feiertage), laut Plan.</p>
+  </section>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,7 +650,7 @@ function viewPlan(data, month) {
     if (onlyMine && !mine) return '';
     const hol = holidayOf(d.date);
     const extra = [];
-    for (const [st, lbl] of [['frei', 'frei n. D.'], ['urlaub', 'Urlaub'], ['efrei', 'Ersatzfrei'], ['wrt', 'WRT'], ['fb', 'FB'], ['gm', 'Gmunden'], ['abw', 'abwesend']]) {
+    for (const [st, lbl] of [['frei', 'frei n. D.'], ['urlaub', 'Urlaub'], ['efrei', 'E-frei'], ['wrt', 'WRT'], ['fb', 'FB'], ['gm', 'Gmunden'], ['abw', 'abwesend']]) {
       const who = data.people.filter(a => statusesOf(d, a).includes(st) && !dienst.includes(a));
       if (who.length) extra.push(`<span class="x"><span class="x-l">${lbl}:</span> ${who.map(a => a === me ? '<b>du</b>' : esc(surname(a))).join(', ')}</span>`);
     }
@@ -620,11 +678,25 @@ function viewPlan(data, month) {
 const isWorkday = s => { const w = dow(s); return w !== 0 && w !== 6 && !holidayOf(s); };
 const YEAR_METRICS = {
   urlaub:   { label: 'Urlaub', unit: 'Arbeitstage', hint: 'Urlaubstage Mo–Fr ohne Feiertage', test: (d, a) => statusesOf(d, a).includes('urlaub') && isWorkday(d.date) },
-  urlaubKT: { label: 'Urlaub (Kalendertage)', unit: 'Kalendertage', hint: 'alle eingetragenen Urlaubstage inkl. Wochenende', test: (d, a) => statusesOf(d, a).includes('urlaub') },
+  efrei:    { label: 'E-frei (ZA)', unit: 'Tage', hint: 'E-frei / Zeitausgleich, Mo–Fr ohne Feiertage', test: (d, a) => statusesOf(d, a).includes('efrei') && isWorkday(d.date) },
+  frei:     { label: 'Urlaub + E-frei', unit: 'Tage', hint: 'Urlaub und E-frei zusammen, Mo–Fr ohne Feiertage', test: (d, a) => statusesOf(d, a).some(s => s === 'urlaub' || s === 'efrei') && isWorkday(d.date) },
   dienst:   { label: 'Dienste', unit: 'Dienste', hint: 'Nachtdienste (ND2 + ND3)', test: (d, a) => statusesOf(d, a).includes('dienst') },
   weDienst: { label: 'WE/Feiertag-Dienste', unit: 'Dienste', hint: 'Dienste an Sa, So und Feiertagen', test: (d, a) => statusesOf(d, a).includes('dienst') && isWeekendOrHoliday(d.date) },
-  efrei:    { label: 'Ersatzfrei + WRT', unit: 'Tage', hint: 'Ersatzfrei und Wochenruhetage', test: (d, a) => statusesOf(d, a).some(s => s === 'efrei' || s === 'wrt') },
+  wrt:      { label: 'Wochenruhetage', unit: 'Tage', hint: 'Wochenruhetage (WRT)', test: (d, a) => statusesOf(d, a).includes('wrt') },
+  urlaubKT: { label: 'Urlaub (Kalendertage)', unit: 'Kalendertage', hint: 'alle eingetragenen Urlaubstage inkl. Wochenende', test: (d, a) => statusesOf(d, a).includes('urlaub') },
 };
+// Spalten der Jahres-Summentabelle
+const SUM_COLS = ['urlaub', 'efrei', 'frei', 'dienst', 'weDienst'];
+
+/** Jahressummen je Person: { a, urlaub, efrei, frei, dienst, weDienst } */
+function yearSums(data, year, people = data.people) {
+  const months = [...data.months.values()].filter(m => m.key.startsWith(year + '-'));
+  return people.map(a => {
+    const r = { a };
+    for (const k of SUM_COLS) r[k] = months.reduce((x, m) => x + m.days.filter(d => YEAR_METRICS[k].test(d, a)).length, 0);
+    return r;
+  }).filter(r => SUM_COLS.some(k => r[k]));
+}
 
 function yearsOf(data) { return [...new Set([...data.months.keys()].map(k => k.slice(0, 4)))].sort(); }
 
@@ -671,9 +743,22 @@ function viewYear(data) {
       <td class="sum">${r.sum}</td></tr>`).join('');
   const colSum = keys.map((k, i) => data.months.has(k) ? rows.reduce((x, r) => x + (r.vals[i] || 0), 0) : '');
 
-  return `<section class="card">
+  const sums = yearSums(data, state.year);
+  const tot = k => sums.reduce((x, r) => x + r[k], 0);
+  const sumTable = `<section class="card">
+    <div class="card-head"><h2>Summen pro Person <span class="muted">· ${state.year}</span></h2></div>
+    <div class="matrix-wrap"><table class="stable">
+      <thead><tr><th class="name"></th>${SUM_COLS.map(k => `<th class="${k === 'frei' ? 'hl' : ''}" title="${esc(YEAR_METRICS[k].hint)}">${k === 'weDienst' ? 'WE-Dienste' : YEAR_METRICS[k].label}</th>`).join('')}</tr></thead>
+      <tbody>${sums.map(r => `<tr class="${r.a === me ? 'me' : ''}"><th class="name"><span class="nm-full">${esc(plainName(r.a))}</span><span class="nm-short">${esc(surname(r.a))}</span></th>${SUM_COLS.map(k =>
+        `<td class="${k === 'frei' ? 'hl' : ''}${r[k] ? '' : ' zero'}" data-metric="${k}" title="Monate anzeigen">${r[k] || '·'}</td>`).join('')}</tr>`).join('')}</tbody>
+      <tfoot><tr><th class="name">Summe</th>${SUM_COLS.map(k => `<td class="${k === 'frei' ? 'hl' : ''}">${tot(k)}</td>`).join('')}</tr></tfoot>
+    </table></div>
+    <p class="muted small">Urlaub und E-frei zählen Arbeitstage (Mo–Fr ohne Feiertage).${missing.length ? ` Ohne Plan: ${missing.map(k => MONATE[+k.slice(5) - 1]).join(', ')}.` : ''}</p>
+  </section>`;
+
+  return sumTable + `<section class="card">
     <div class="card-head">
-      <h2>Jahresübersicht ${years.length > 1 ? `<select id="yearSel" aria-label="Jahr">${years.map(y => `<option ${y === state.year ? 'selected' : ''}>${y}</option>`).join('')}</select>` : state.year}</h2>
+      <h2>Pro Monat · ${years.length > 1 ? `<select id="yearSel" aria-label="Jahr">${years.map(y => `<option ${y === state.year ? 'selected' : ''}>${y}</option>`).join('')}</select>` : state.year}</h2>
       <button class="btn secondary btn-sm" data-action="year-xlsx">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Excel</button>
     </div>
@@ -692,14 +777,21 @@ function viewYear(data) {
 function exportYearXlsx() {
   const data = state.data, year = state.year;
   const wb = XLSX.utils.book_new();
+  const sums = yearSums(data, year);
+  const sws = XLSX.utils.aoa_to_sheet([[`Summen ${year} – Assistenz`], ['Urlaub und E-frei in Arbeitstagen (Mo–Fr ohne Feiertage)'], [],
+    ['Name', 'Kürzel', ...SUM_COLS.map(k => YEAR_METRICS[k].label)],
+    ...sums.map(r => [plainName(r.a), r.a, ...SUM_COLS.map(k => r[k])]),
+    ['Summe', '', ...SUM_COLS.map(k => sums.reduce((x, r) => x + r[k], 0))]]);
+  sws['!cols'] = [{ wch: 24 }, { wch: 7 }, ...SUM_COLS.map(() => ({ wch: 16 }))];
+  XLSX.utils.book_append_sheet(wb, sws, 'Summen');
   for (const [k, m] of Object.entries(YEAR_METRICS)) {
     const { keys, rows, missing } = yearTable(data, year, k);
     const aoa = [[`${m.label} ${year} – ${m.hint}`], [],
       ['Name', 'Kürzel', ...keys.map(x => MONATE[+x.slice(5) - 1]), 'Summe'],
       ...rows.map(r => [plainName(r.a), r.a, ...r.vals.map(v => v === null ? '' : v), r.sum]),
       [], ...(missing.length ? [[`Kein Plan für: ${missing.map(x => MONATE[+x.slice(5) - 1]).join(', ')}`]] : [])];
-    if (k === 'urlaub' || k === 'urlaubKT') {
-      aoa.push([], ['Urlaubstage im Detail']);
+    if (['urlaub', 'efrei', 'frei', 'urlaubKT'].includes(k)) {
+      aoa.push([], ['Tage im Detail']);
       const t = YEAR_METRICS[k].test;
       for (const r of rows) {
         const days = keys.filter(x => data.months.has(x)).flatMap(x => data.months.get(x).days.filter(d => t(d, r.a)).map(d => d.date));
@@ -736,7 +828,7 @@ function exportPanel(data) {
 
 const EXPORT_COLS = [
   ['dienst', 'Dienst Assistenz'], ['oa', 'OA'], ['frei', 'Frei nach Dienst'], ['urlaub', 'Urlaub'],
-  ['wrt', 'Wochenruhetag'], ['efrei', 'Ersatzfrei'], ['fb', 'Fortbildung'], ['gm', 'Gmunden'], ['abw', 'Abwesend'],
+  ['wrt', 'Wochenruhetag'], ['efrei', 'E-frei (ZA)'], ['fb', 'Fortbildung'], ['gm', 'Gmunden'], ['abw', 'Abwesend'],
 ];
 
 /** Eine Zeile pro Tag, je Spalte die Namen. */
@@ -824,7 +916,7 @@ function planTable(data, month, me) {
       <tbody>${oaRow}${body}</tbody>
     </table></div>
     ${legend(['dienst', 'frei', 'urlaub', 'fb', 'wrt', 'efrei', 'gm', 'abw', 'vb'])}
-    <p class="muted small">D = Dienst · f = frei nach Dienst · U = Urlaub · W = Wochenruhetag · E = Ersatzfrei · · = im Haus</p>`;
+    <p class="muted small">D = Dienst · f = frei nach Dienst · U = Urlaub · W = Wochenruhetag · E = E-frei (Zeitausgleich) · · = im Haus</p>`;
 }
 
 function findDay(data, date) {
@@ -850,7 +942,7 @@ function viewDay(data) {
 
   const slots = [
     ['frei', 'Frei nach Dienst'], ['vb', 'Im Haus'], ['gm', 'Gmunden'], ['urlaub', 'Urlaub'],
-    ['fb', 'Fortbildung'], ['wrt', 'Wochenruhetag'], ['efrei', 'Ersatzfrei'], ['abw', 'Abwesend'],
+    ['fb', 'Fortbildung'], ['wrt', 'Wochenruhetag'], ['efrei', 'E-frei (Zeitausgleich)'], ['abw', 'Abwesend'],
   ].filter(([st]) => who(st).length)
     .map(([st, t]) => `<div class="slot"><h3>${t}</h3><div class="names">${names(who(st))}</div></div>`).join('');
 
@@ -1029,7 +1121,7 @@ document.addEventListener('submit', async e => {
 });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('button, [data-person], [data-goto], [data-month]');
+  const t = e.target.closest('button, [data-person], [data-goto], [data-month], [data-metric]');
   if (!t) return;
   if (t.classList.contains('tab')) {
     state.view = t.dataset.view; safeSet('dp.view', state.view);
@@ -1039,9 +1131,13 @@ document.addEventListener('click', e => {
   }
   else if (t.dataset.person) { state.person = t.dataset.person; state.choosing = false; safeSet('dp.person', state.person); render(); window.scrollTo(0, 0); }
   else if (t.dataset.action === 'choose') { state.choosing = true; render(); }
-  else if (t.dataset.metric) { state.yearMetric = t.dataset.metric; safeSet('dp.yearMetric', state.yearMetric); render(); }
+  else if (t.dataset.viewLink) { state.view = t.dataset.viewLink; render(); window.scrollTo(0, 0); }
+  else if (t.dataset.metric) { state.yearMetric = t.dataset.metric; safeSet('dp.yearMetric', state.yearMetric); render(); if (t.tagName === 'TD') $('.ytable')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   else if (t.dataset.action === 'year-xlsx') exportYearXlsx();
   else if (t.dataset.month) { state.month = t.dataset.month; state.view = 'plan'; state.planMode = 'table'; render(); window.scrollTo(0, 0); }
+  else if (t.dataset.action === 'install' && installPrompt) { installPrompt.prompt(); installPrompt.userChoice.finally(() => { installPrompt = null; render(); }); }
+  else if (t.dataset.action === 'install-hide') { safeSet('dp.installHide', '1'); state.showInstall = false; render(); }
+  else if (t.dataset.action === 'install-help') { state.showInstall = true; state.view = 'me'; render(); window.scrollTo(0, 0); }
   else if (t.dataset.action === 'export-toggle') { state.exportOpen = !state.exportOpen; state.exportSel = null; render(); }
   else if (t.dataset.action === 'export-xlsx') exportXlsx();
   else if (t.dataset.action === 'export-pdf') exportPdf();
@@ -1088,6 +1184,11 @@ window.addEventListener('drop', e => {
   e.preventDefault(); dragDepth = 0; $('#dropOverlay').hidden = true;
   if (canUpload() && e.dataTransfer.files.length) previewFiles(e.dataTransfer.files);
 });
+
+// Offline-Fähigkeit + Installierbarkeit
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 
 // Start
 (async () => {

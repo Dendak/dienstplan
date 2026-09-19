@@ -6,9 +6,16 @@
 <title>Dienstplan Assistenz</title>
 <meta name="theme-color" content="#ab045e">
 <meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Dienstplan">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <header class="top">
@@ -64,7 +71,7 @@
     </div>
     <div id="checks"></div>
   </details>
-  <p class="small"><button class="btn-link" id="logoutBtn" hidden>Passwort auf diesem Gerät vergessen</button></p>
+  <p class="small"><button class="btn-link" data-action="install-help">Als App aufs Handy</button> · <button class="btn-link" id="logoutBtn" hidden>Passwort auf diesem Gerät vergessen</button></p>
   <p class="muted small" id="sourceInfo"></p>
 </footer>
 
@@ -73,6 +80,6 @@
 <div id="dropOverlay" hidden><div>Excel-Datei loslassen für Vorschau</div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
