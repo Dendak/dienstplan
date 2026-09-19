@@ -14,8 +14,14 @@ const ASSISTENZ = {
   Mas:  'Dr.in Karolina Masarova',
   Mo:   'Dr. Majed Mohammad',
   San:  'Dr.in Sofia Santesteban',
-  Ah:   'Ah',   // Name noch unbekannt
-  El:   'El',   // Name noch unbekannt
+  Ah:   'Aharanwa',
+  El:   'El Shiri',
+};
+
+// Letzter Arbeitstag – danach werden Einträge ignoriert (z. B. Reste in der VB-Formel)
+const AUSTRITT = {
+  Ah: '2026-07-31',
+  El: '2026-06-30',
 };
 
 // Tippvarianten aus den Excel-Dateien → Kürzel
@@ -38,13 +44,13 @@ const OA_NAMEN = {
   Kr:  'Krupitz',
   Le:  'Lechner',
 };
-// weitere bekannte Kürzel (kein Tippfehler): Ko, Grü, Kl = Turnusärztin
-const OA_KUERZEL = [...Object.keys(OA_NAMEN), 'Ko', 'Grü', 'Kl'];
+// weitere bekannte Kürzel (kein Tippfehler): Ko, Grü, Kl/LK = Turnusärzt:innen
+const OA_KUERZEL = [...Object.keys(OA_NAMEN), 'Ko', 'Grü', 'Kl', 'LK'];
 
 // Spaltenüberschrift (Zeile 1 im Excel) → Status
 const SPALTEN = {
   'nd1': 'oadienst', 'nd2': 'dienst', 'nd3': 'dienst3',
-  'vb': 'vb', 'bis16.00': 'bis16',
+  'vb': 'vb', 'bis16.00': 'bis16', 'bz': 'brz',
   'fb': 'fb',
   'urlaub': 'urlaub',
   'krank': 'abw',
@@ -92,7 +98,7 @@ const todayIso = () => { const d = new Date(); return iso(d.getFullYear(), d.get
 const fmtDay = s => { const d = parseIso(s); return `${WT[d.getUTCDay()]}, ${d.getUTCDate()}.${d.getUTCMonth() + 1}.`; };
 const fmtLong = s => { const d = parseIso(s); return `${['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'][d.getUTCDay()]}, ${d.getUTCDate()}. ${MONATE[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
 const monthLabel = key => { const [y, m] = key.split('-').map(Number); return `${MONATE[m - 1]} ${y}`; };
-const personName = a => ASSISTENZ[a] || a;
+const personName = a => ASSISTENZ[a] || OA_NAMEN[a] || a;
 const initials = a => a;
 
 function serialToIso(n) {
@@ -227,7 +233,7 @@ function buildData(sheets) {
       for (const [n, set] of Object.entries(d.entries)) {
         if (set.has('oadienst')) d.oa.push(n);
         const a = canon.get(n.toLowerCase());
-        if (!a) continue;
+        if (!a || (AUSTRITT[a] && d.date > AUSTRITT[a])) continue;
         norm[a] ||= new Set();
         set.forEach(s => norm[a].add(s === 'dienst3' ? 'dienst' : s));
       }
@@ -397,8 +403,8 @@ function render() {
 }
 
 // ---- Namen ----
-const plainName = a => (ASSISTENZ[a] || a).replace(/^Dr\.(in)? /, '');
-const surname = a => ASSISTENZ[a] ? plainName(a).split(' ').slice(-1)[0] : a;
+const plainName = a => personName(a).replace(/^(Prim\.|OA|OÄ) /, '').replace(/^Dr\.(in)? /, '');
+const surname = a => /^(Dr|OA|OÄ|Prim)/.test(personName(a)) ? plainName(a).split(' ').slice(-1)[0] : plainName(a);
 const oaName = k => OA_NAMEN[k] || k;
 const oaShort = k => OA_NAMEN[k] ? OA_NAMEN[k].replace(/^(Prim\.|OA|OÄ) (Dr\.(in)? )?/, '$1 ').replace(/ \S+ (\S+)$/, ' $1') : k;
 const avatar = a => `<span class="av" aria-hidden="true">${esc(a)}</span>`;
