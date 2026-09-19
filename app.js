@@ -205,7 +205,7 @@ function parseWorkbook(buf, source) {
 }
 
 /** Baut aus Monatsblättern den Datensatz. */
-function buildData(sheets) {
+function buildData(sheets, korrekturen = []) {
   const months = new Map();
   for (const s of sheets) months.set(s.key, s); // spätere überschreiben frühere
 
@@ -238,6 +238,12 @@ function buildData(sheets) {
         set.forEach(s => norm[a].add(s === 'dienst3' ? 'dienst' : s));
       }
       d.entries = norm;
+      // Korrekturen (z. B. geplanter Urlaub, der anders verlaufen ist)
+      for (const k of korrekturen) {
+        if (d.date < k.von || d.date > k.bis) continue;
+        const set = d.entries[k.person];
+        if (set && set.has(k.statt)) { set.delete(k.statt); set.add(k.neu); }
+      }
     }
     // Monate ohne einen einzigen Dienst gelten als leer (z. B. leere Jahresvorlage)
     m.hasDienst = m.days.some(d => Object.values(d.entries).some(s => s.has('dienst')));
@@ -304,10 +310,18 @@ async function encryptBundle(files, pw) {
   return { v: 1, kdf: 'PBKDF2-SHA256', iter, salt: b64(salt), iv: b64(iv), ct: b64(ct) };
 }
 
+/** Korrekturen liegen als JSON-Datei verschlüsselt im Bundle (nie im öffentlichen Code). */
+function korrekturenOf(files) {
+  return files.filter(f => /\.json$/i.test(f.name)).flatMap(f => {
+    try { return JSON.parse(new TextDecoder().decode(unb64(f.data))).korrekturen || []; } catch (e) { return []; }
+  });
+}
+const isExcel = f => /\.xls[xm]?$/i.test(f.name);
+
 function dataFromFiles(files) {
-  const sheets = files.flatMap(f => parseWorkbook(unb64(f.data), f.name));
-  state.sourceInfo = files.length ? `Quelle: ${files.map(f => f.name).join(', ')}` : '';
-  return buildData(sheets);
+  const sheets = files.filter(isExcel).flatMap(f => parseWorkbook(unb64(f.data), f.name));
+  state.sourceInfo = files.length ? `Quelle: ${files.filter(isExcel).map(f => f.name).join(', ')}` : '';
+  return buildData(sheets, korrekturenOf(files));
 }
 
 async function loadPublished() {
@@ -958,7 +972,7 @@ async function previewFiles(fileList) {
   if (!files.length) return;
   try {
     const pending = await Promise.all(files.map(async f => ({ name: f.name, data: b64(await f.arrayBuffer()) })));
-    const data = buildData(pending.flatMap(f => parseWorkbook(unb64(f.data), f.name)));
+    const data = buildData(pending.flatMap(f => parseWorkbook(unb64(f.data), f.name)), korrekturenOf(state.files));
     if (!data.months.size) { alert('In dieser Datei wurde kein Monat mit Diensten gefunden.'); return; }
     state.pending = pending;
     state.preview = pending.map(f => f.name).join(', ');
